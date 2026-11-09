@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { FileIcon } from "../../ui/icons";
 import {
   remarkWorkspaceFileLines,
   workspaceFileLineFromAnchorProps,
@@ -27,9 +28,13 @@ function markdownComponents(
             data-line={file.line}
             data-path={file.path}
             data-testid="workspace-file-link"
+            title={`Open ${file.path}:${file.line}`}
             type="button"
             onClick={() => onOpenWorkspaceFileLine(file)}
           >
+            <span className="message__file-link-icon" aria-hidden="true">
+              <FileIcon />
+            </span>
             {children}
           </button>
         );

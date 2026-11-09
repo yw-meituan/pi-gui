@@ -10,6 +10,7 @@ import {
   seedNamedTextSessionFixture,
   selectSession,
   selectSidePanel,
+  waitForTimelineLayout,
 } from "../helpers/electron-app";
 
 const SESSION_TITLE = "File line fixture session";
@@ -18,6 +19,8 @@ function assistantMessage(workspacePath: string): string {
   return [
     "See src/app.ts:3 for the marker.",
     "Inline `src/app.ts:10-20` covers a range.",
+    "Open `src/app.ts` without a line or [Notes](notes.md).",
+    "Hash range [Lines](src/app.ts#L10-L20).",
     "[Implementation](src/app.ts#L3) uses a hash.",
     "Column [notes](notes.md:2:4).",
     `Absolute ${workspacePath}/src/app.ts:3 is in this workspace.`,
@@ -120,6 +123,7 @@ test("assistant file lines open in the Files panel and web links stay external",
   try {
     const window = await harness.firstWindow();
     await selectSession(window, SESSION_TITLE);
+    await waitForTimelineLayout(window);
     const appUrl = window.url();
     const openedExternalUrls = await captureOpenedExternalUrls(harness);
     const assistant = window.locator(".timeline-item--assistant");
@@ -202,6 +206,15 @@ test("assistant file lines open in the Files panel and web links stay external",
       window.locator('.file-workbench__tree-row--file[data-file-path="secret.txt"]'),
     ).toHaveCount(0);
     await expect(window.getByTestId("file-line-mark")).toContainText("ignored secret line");
+    await waitForTimelineLayout(window);
+    await fileButton(assistant, "src/app.ts").click();
+    await expect(window.getByTestId("file-workbench-preview")).toContainText("marker-3");
+    await waitForTimelineLayout(window);
+    await fileButton(assistant, "Notes").click();
+    await expect(window.getByTestId("file-workbench-preview")).toContainText("Line two is here");
+    await waitForTimelineLayout(window);
+    await fileButton(assistant, "Lines").click();
+    await expect(window.getByTestId("file-line-mark")).toHaveCount(11);
   } finally {
     await harness.close();
   }

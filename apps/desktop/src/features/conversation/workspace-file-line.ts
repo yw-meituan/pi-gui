@@ -7,9 +7,13 @@ export interface WorkspaceFileLine {
   readonly endLine: number;
 }
 
-const FILE_LINE_PATTERN = /^(.*?)(?::(\d+)(?:-(\d+)|:(\d+))?|#L(\d+))$/;
+const FILE_LINE_PATTERN = /^(.*?)(?::(\d+)(?:-(\d+)|:(\d+))?|#L(\d+)(?:-L?(\d+))?)$/;
 const PATH_START = /^[\p{L}\p{N}./_~@]$/u;
 const LINE_NUMBER = /^[1-9]\d{0,6}$/;
+// Bare inline code is ambiguous (console.log, Promise.resolve). Explicit Markdown
+// links and ./qualified paths cover names outside this common extension set.
+const INLINE_FILE_EXTENSION =
+  /\.(?:[cm]?[jt]sx?|jsonc?|md|markdown|txt|ya?ml|toml|ini|conf|xml|html?|css|scss|vue|svelte|java|kt|py|go|rs|[ch]|cpp|hpp|sh|sql|proto|csv|svg|png|jpe?g|webp)$/i;
 
 interface MarkdownNode {
   type: string;
@@ -25,8 +29,24 @@ export function parseWorkspaceFileLine(
   raw: string,
   workspacePath: string | null,
 ): WorkspaceFileLine | null {
-  const trimmed = raw.trim();
-  if (!trimmed || /\s/.test(trimmed) || trimmed.includes("\\") || trimmed.includes("://")) {
+  return parseFileReference(raw, workspacePath, false);
+}
+
+/** Explicit links, inline code and tool arguments may omit a line number. */
+export function parseWorkspaceFileReference(
+  raw: string,
+  workspacePath: string | null,
+): WorkspaceFileLine | null {
+  return parseFileReference(raw, workspacePath, true);
+}
+
+function parseFileReference(
+  raw: string,
+  workspacePath: string | null,
+  explicit: boolean,
+): WorkspaceFileLine | null {
+  const trimmed = isWindowsWorkspace(workspacePath) ? raw.trim().replaceAll("\\", "/") : raw.trim();
+  if (!trimmed || (!explicit && /\s/.test(trimmed)) || trimmed.includes("://")) {
     return null;
   }
   if (/^(https?|mailto|file):/i.test(trimmed)) {
@@ -34,13 +54,13 @@ export function parseWorkspaceFileLine(
   }
 
   const match = FILE_LINE_PATTERN.exec(trimmed);
-  if (!match) {
+  if (!match && !explicit) {
     return null;
   }
-  const rawPath = match[1];
-  const lineText = match[5] ?? match[2];
-  const endText = match[3];
-  if (!rawPath || rawPath.includes(":")) {
+  const rawPath = match ? match[1] : trimmed;
+  const lineText = match ? (match[5] ?? match[2]) : "1";
+  const endText = match?.[6] ?? match?.[3];
+  if (!rawPath) {
     return null;
   }
   const line = parseLineNumber(lineText);
@@ -53,7 +73,7 @@ export function parseWorkspaceFileLine(
   }
 
   const relative = toWorkspaceRelative(rawPath, workspacePath);
-  if (!relative || !isSafeRelativePath(relative)) {
+  if (!relative || !isSafeRelativePath(relative, explicit)) {
     return null;
   }
   return { path: relative, line, endLine };
@@ -88,7 +108,7 @@ export function decodeWorkspaceFileLine(value: string | undefined): WorkspaceFil
   } catch {
     return null;
   }
-  if (!isSafeRelativePath(path)) {
+  if (!isSafeRelativePath(path, true)) {
     return null;
   }
   return { path, line, endLine };
@@ -112,12 +132,18 @@ function annotateFileLines(node: MarkdownNode, workspacePath: string | null): vo
     }
     if (child.type === "inlineCode" && typeof child.value === "string") {
       const label = child.value.trim();
-      const file = parseWorkspaceFileLine(label, workspacePath);
-      next.push(file ? fileLineNode(file, label) : child);
+      const file = parseWorkspaceFileReference(label, workspacePath);
+      const pathLike =
+        !/[\s(){}=;]/.test(label) &&
+        (parseWorkspaceFileLine(label, workspacePath) ||
+          label.includes("/") ||
+          (isWindowsWorkspace(workspacePath) && label.includes("\\")) ||
+          INLINE_FILE_EXTENSION.test(label));
+      next.push(file && pathLike ? fileLineNode(file, label) : child);
       continue;
     }
     if (child.type === "link" && typeof child.url === "string") {
-      const file = parseWorkspaceFileLine(decodeLinkDestination(child.url), workspacePath);
+      const file = parseWorkspaceFileReference(decodeLinkDestination(child.url), workspacePath);
       if (file) {
         child.url = "";
         child.data = {
@@ -195,22 +221,39 @@ function decodeLinkDestination(url: string): string {
 
 function toWorkspaceRelative(rawPath: string, workspacePath: string | null): string | null {
   let path = rawPath.startsWith("./") ? rawPath.slice(2) : rawPath;
-  if (!path.startsWith("/")) {
+  if (!path.startsWith("/") && !/^[A-Za-z]:\//.test(path)) {
     return path;
   }
   if (!workspacePath) {
     return null;
   }
-  const root = workspacePath.replace(/\/+$/, "");
-  if (!root.startsWith("/") || path === root || !path.startsWith(`${root}/`)) {
+  const windows = isWindowsWorkspace(workspacePath);
+  const normalizedRoot = windows ? workspacePath.replaceAll("\\", "/") : workspacePath;
+  const root = normalizedRoot.replace(/\/+$/, "");
+  const prefix = `${root}/`;
+  if (
+    (!normalizedRoot.startsWith("/") && !windows) ||
+    !(windows ? path.toLowerCase().startsWith(prefix.toLowerCase()) : path.startsWith(prefix))
+  ) {
     return null;
   }
-  path = path.slice(root.length + 1);
+  path = path.slice(prefix.length);
   return path.startsWith("./") ? path.slice(2) : path;
 }
 
-function isSafeRelativePath(relative: string): boolean {
-  if (!relative || relative.startsWith("/") || relative.includes("//") || relative.includes("\\")) {
+function isWindowsWorkspace(workspacePath: string | null): boolean {
+  return workspacePath !== null && /^[A-Za-z]:[\\/]/.test(workspacePath);
+}
+
+function isSafeRelativePath(relative: string, allowBasename = false): boolean {
+  if (
+    !relative ||
+    relative.startsWith("/") ||
+    relative.startsWith("~") ||
+    relative.includes("//") ||
+    /[\\:?#]/.test(relative) ||
+    Array.from(relative).some((character) => character.charCodeAt(0) < 32)
+  ) {
     return false;
   }
   const segments = relative.split("/");
@@ -222,7 +265,7 @@ function isSafeRelativePath(relative: string): boolean {
   const extension = dot > 0 ? fileName.slice(dot + 1) : "";
   const hasDirectory = segments.length > 1;
   const extensionOk = /^[A-Za-z][A-Za-z0-9]*$/.test(extension);
-  return hasDirectory || extensionOk;
+  return allowBasename || hasDirectory || extensionOk;
 }
 
 function parseLineNumber(text: string | undefined): number | null {

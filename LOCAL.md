@@ -36,6 +36,13 @@ corepack pnpm dev
 共享 `~/.pi/agent` 的配置、凭证、skills 和扩展。GUI 的配置改动也会影响 CLI。
 `ctx.ui.custom()` 等终端 UI 扩展需另行适配。
 
+## 文件引用
+
+- `read`、`write`、`edit` 卡片显示可点击文件标签；多文件编辑逐个列出，读取按 `offset` 定位。
+- 正文支持反引号路径 `src/app.ts`、`./Makefile`，以及行号 `src/app.ts:42`、范围 `src/app.ts:10-20`。
+- 自定义标签使用 Markdown：`[实现](src/app.ts#L10-L20)`；含空格文件用 `[说明](docs/my%20file.md)`。
+- 点击打开右侧 Files，保留原有展开和差异查看操作。侧栏读取限定当前工作区；打开失败时保留当前文件。
+
 ## 更新上游
 
 先退出应用，提交自己的改动，确认 `git status --short` 为空。

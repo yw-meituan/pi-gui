@@ -27,6 +27,7 @@ import { ExtensionCardItem, type RunExtensionAction } from "./extension-card";
 import { ImageAttachmentThumb } from "./image-attachment-thumb";
 import { MessageMarkdown } from "./message-markdown";
 import { stringifyToolValue, toolOutputImages } from "./tool-output-images";
+import { toolFileTargets } from "./tool-file-targets";
 import { TurnChangesCard, type OpenTurnChange } from "./turn-changes-card";
 import type { WorkspaceFileLine } from "./workspace-file-line";
 import { InlineDiff, extractDiffFromOutput } from "../../ui/diff-inline";
@@ -99,6 +100,8 @@ export function TimelineItem({
           expanded={expandedToolCallIds?.has(item.callId) ?? false}
           onToggle={onToggleToolCall}
           onViewFileInDiff={onViewFileInDiff}
+          workspacePath={workspacePath}
+          onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
         />
       );
     case "summary":
@@ -277,11 +280,15 @@ function TimelineToolCallItem({
   expanded,
   onToggle,
   onViewFileInDiff,
+  workspacePath,
+  onOpenWorkspaceFileLine,
 }: {
   readonly item: TimelineToolCall;
   readonly expanded: boolean;
   readonly onToggle?: (callId: string) => void;
   readonly onViewFileInDiff?: (path: string) => void;
+  readonly workspacePath?: string;
+  readonly onOpenWorkspaceFileLine?: (target: WorkspaceFileLine) => void;
 }) {
   const hasContent = item.input !== undefined || item.output !== undefined;
   // An extension's tool shows the label it registered instead of a guess from its name.
@@ -297,6 +304,10 @@ function TimelineToolCallItem({
   const diffLanguage = diffText && filePath ? extensionToLanguage(filePath) : undefined;
   const inlineDetail = item.status === "error" ? item.detail : undefined;
   const images = toolOutputImages(item.output);
+  const files = useMemo(
+    () => toolFileTargets(item.toolName, item.input, workspacePath ?? null),
+    [item.toolName, item.input, workspacePath],
+  );
 
   const handleCopy = () => {
     const text = diffText ?? formatToolContent(item.input, item.output);
@@ -353,6 +364,25 @@ function TimelineToolCallItem({
           </button>
         ) : null}
       </div>
+      {onOpenWorkspaceFileLine && files.length > 0 ? (
+        <div className="timeline-tool__files">
+          {files.map((file) => (
+            <button
+              key={file.path}
+              className="timeline-tool__file-link"
+              data-testid="timeline-tool-file-link"
+              data-path={file.path}
+              title={`Open ${file.path}${file.line > 1 ? `:${file.line}` : ""}`}
+              type="button"
+              onClick={() => onOpenWorkspaceFileLine(file)}
+            >
+              <FileIcon />
+              <span>{shortenPath(file.path)}</span>
+              {file.line > 1 ? <span>:{file.line}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {images.length > 0 ? (
         // Shown while collapsed too: an image a tool made is a result in itself.
         <div className="timeline-tool__images" data-testid="timeline-tool-images">

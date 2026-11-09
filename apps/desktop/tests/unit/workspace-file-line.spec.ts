@@ -6,6 +6,7 @@ import {
   decodeWorkspaceFileLine,
   encodeWorkspaceFileLine,
   parseWorkspaceFileLine,
+  parseWorkspaceFileReference,
   remarkWorkspaceFileLines,
   workspaceFileLineFromAnchorProps,
 } from "../../src/features/conversation/workspace-file-line";
@@ -51,6 +52,60 @@ test("parseWorkspaceFileLine accepts the chosen spellings", () => {
   });
 });
 
+test("explicit file references accept plain paths, spaces and hash ranges", () => {
+  for (const path of ["README.md", "Makefile", ".gitignore", "docs/my file.md"]) {
+    const target = { path, line: 1, endLine: 1 };
+    expect(parseWorkspaceFileReference(path, WORKSPACE)).toEqual(target);
+    expect(decodeWorkspaceFileLine(encodeWorkspaceFileLine(target))).toEqual(target);
+  }
+  expect(parseWorkspaceFileReference("/repo/docs/my file.md#L2-L4", WORKSPACE)).toEqual({
+    path: "docs/my file.md",
+    line: 2,
+    endLine: 4,
+  });
+  for (const path of [
+    "javascript:alert(1)",
+    "../secret",
+    "/other/file.ts",
+    "~/file.ts",
+    "src/a.ts#L0",
+    "src/a.ts:0",
+    "src/a.ts#L4-L2",
+    "src/a.ts\nmalformed",
+  ]) {
+    expect(parseWorkspaceFileReference(path, WORKSPACE)).toBeNull();
+  }
+});
+
+test("inline-code recognition preserves expressions and accepts qualified extensionless files", () => {
+  const labels = [
+    "console.log",
+    "Promise.resolve",
+    "node src/app.js",
+    "./Makefile",
+    "/repo/Makefile",
+  ];
+  const tree = {
+    type: "root",
+    children: labels.map((value) => ({ type: "inlineCode", value })),
+  };
+  remarkWorkspaceFileLines(WORKSPACE)()(tree);
+  expect(tree.children?.slice(0, 3).map((node) => node.type)).toEqual([
+    "inlineCode",
+    "inlineCode",
+    "inlineCode",
+  ]);
+  const encoded: string[] = [];
+  walkMarkdown(tree, (node) => {
+    const file = node.data?.hProperties?.dataWorkspaceFileLine;
+    if (file) encoded.push(file);
+  });
+  expect(encoded.map(decodeWorkspaceFileLine)).toEqual([
+    { path: "Makefile", line: 1, endLine: 1 },
+    { path: "Makefile", line: 1, endLine: 1 },
+  ]);
+});
+
 test("react-markdown passes file lines on the data attribute, not the href", () => {
   const file = { path: "src/app.ts", line: 3, endLine: 3 };
   const encoded = encodeWorkspaceFileLine(file);
@@ -81,6 +136,8 @@ test("assistant markdown links file lines and leaves fences and web links alone"
   const text = [
     "See src/app.ts:298.",
     "Use `README.md:4` and [Implementation](src/app.ts#L298).",
+    "Open `src/app.ts` and [Build](Makefile) and [Spaced](docs/my%20file.md#L2-L4).",
+    "Keep `someIdentifier` as code and bare src/app.ts as text.",
     "Range `src/app.ts:10-20` and column src/app.ts:10:4.",
     "Absolute /repo/src/app.ts:298.",
     "Outside /other/src/app.ts:298 and ../secret.ts:3.",
@@ -118,6 +175,9 @@ test("assistant markdown links file lines and leaves fences and web links alone"
     { path: "src/app.ts", line: 298, endLine: 298 },
     { path: "README.md", line: 4, endLine: 4 },
     { path: "src/app.ts", line: 298, endLine: 298 },
+    { path: "src/app.ts", line: 1, endLine: 1 },
+    { path: "Makefile", line: 1, endLine: 1 },
+    { path: "docs/my file.md", line: 2, endLine: 4 },
     { path: "src/app.ts", line: 10, endLine: 20 },
     { path: "src/app.ts", line: 10, endLine: 10 },
     { path: "src/app.ts", line: 298, endLine: 298 },
@@ -126,6 +186,9 @@ test("assistant markdown links file lines and leaves fences and web links alone"
     "src/app.ts:298",
     "README.md:4",
     "Implementation",
+    "src/app.ts",
+    "Build",
+    "Spaced",
     "src/app.ts:10-20",
     "src/app.ts:10:4",
     "/repo/src/app.ts:298",
