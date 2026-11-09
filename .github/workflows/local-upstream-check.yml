@@ -1,0 +1,55 @@
+name: Local upstream check
+
+on:
+  schedule:
+    - cron: "0 1 * * 1" # Monday 09:00 Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: local-upstream-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'yw-meituan/pi-gui'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare custom with upstream main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream=minghinmatthewlam/pi-gui
+          sha=$(gh api "repos/$upstream/commits/main" --jq .sha)
+          count=$(gh api "repos/$GH_REPO/compare/custom...minghinmatthewlam:$sha" --jq .ahead_by)
+          title='Upstream updates available'
+          issue=$(gh issue list --state open --limit 100 --json number,title \
+            --jq '.[] | select(.title == "Upstream updates available") | .number' | head -n 1)
+          echo "Upstream commits not yet in custom: $count ($sha)" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$count" == 0 ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" --comment 'custom 已包含当前上游 main。'
+            fi
+            exit 0
+          fi
+          body="$RUNNER_TEMP/upstream-update.md"
+          printf '%s\n' \
+            "上游 main 有 $count 个提交待合入 custom。" \
+            "" \
+            "上游提交：$sha" \
+            "对比：https://github.com/$GH_REPO/compare/custom...minghinmatthewlam:$sha" \
+            "" \
+            '按 LOCAL.md 更新：检查改动 → 快进 main → 合并到 custom → 验证 → 本地打包安装。' \
+            '本任务仅提醒，代码和已安装应用保持原样。' > "$body"
+          if [[ -n "$issue" ]]; then
+            gh issue edit "$issue" --body-file "$body"
+          else
+            gh issue create --title "$title" --body-file "$body" --assignee yw-meituan
+          fi
