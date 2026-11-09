@@ -276,7 +276,7 @@ test("restores each task's tabs and draft through Settings, switching, and resta
     await window.getByTestId("composer").fill("Draft for task B");
     await window.keyboard.press(desktopShortcut(","));
     await expect(window.getByTestId("settings-surface")).toBeVisible();
-    await window.getByRole("button", { name: "Back to app", exact: true }).click();
+    await window.locator(".secondary-surface__back").click();
     await expectActiveTool(window, "Terminal");
     await expect(window.getByTestId("composer")).toHaveValue("Draft for task B");
     await window.getByTestId("composer").click();
